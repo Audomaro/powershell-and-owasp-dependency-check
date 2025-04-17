@@ -37,17 +37,25 @@ Solition Name #3|https://my.server/my-repo-03.git or git@my.server:my-repo-03.gi
 Example of use; to be executed on a powershell terminal:
 
 ```powershell
-./ProcessRepos.ps1
+.\ProcessRepos.ps1
 ```
 
 The default values are:
 
-- RepoListPath = `"${PSScriptRoot}\repos\repo-list.txt"`
-- WorkDir = `"${PSScriptRoot}\repos"`
+- -RepoListPath = `"${PSScriptRoot}\repos\repo-list.txt"`
+- -WorkDir = `"${PSScriptRoot}\repos"`
 
 The `repos` path in this repository is ignored.
 
 > If shh repositories are added, the terminal will ask you for the key password when you run the script.
+
+## Updating the OWASP Dependency-Check Database
+
+OWASP Dependency-Check relies on an up-to-date vulnerability database. To update it manually before scanning, you can use the provided PowerShell script:
+
+```powershell
+.\UpdateOwaspDb.ps1 [-UseProxy $true|$false]
+```
 
 ## Where get the tools?
 

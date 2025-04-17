@@ -6,7 +6,7 @@ param(
     [string]$WorkDir = "${PSScriptRoot}\repos"
 )
 
-# load functions
+# Load functions from an external script located in the "scripts" folder
 . "${PSScriptRoot}\scripts\Config.ps1"
 . "${PSScriptRoot}\scripts\DownloadRepoGit.ps1"
 . "${PSScriptRoot}\scripts\RunSecScan.ps1"
