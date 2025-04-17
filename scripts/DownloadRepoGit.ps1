@@ -14,7 +14,7 @@ function DownloadRepoGit {
 
     try {
         git clone $UrlGit $Dest
-        Write-Host "Repository cloned in: ${Dest}" -ForegroundColor Green
+        Write-Host "Repository cloned in: ${Dest}" -ForegroundColor $Env:COLOR_SUCC
     }
     catch {
         Write-Error "Error when cloning repository from ${UrlGit}: $_"
