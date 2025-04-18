@@ -3,7 +3,7 @@ function DownloadRepoGit {
         [Parameter(Mandatory = $true)]
         [string]$UrlGit,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $true)]
         [string]$Dest
     )
 
