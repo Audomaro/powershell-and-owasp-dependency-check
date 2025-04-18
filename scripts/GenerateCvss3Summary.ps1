@@ -35,25 +35,28 @@ function GenerateCvss3Summary {
         }
     }
 
-    # Prepare output
+    # Prepare summary section
     $lines = @()
-    $lines += "summary:"
+    $lines += "----------[Summary]----------"
     $lines += "critical: $($summary.critical)"
     $lines += "high:     $($summary.high)"
     $lines += "medium:   $($summary.medium)"
     $lines += "low:      $($summary.low)"
     $lines += ""
 
-    # Sort by severity explicitly: critical > high > medium > low
-    $severityOrder = @{ critical = 1; high = 2; medium = 3; low = 4 }
-    $sorted = $uniqueVulns | Sort-Object { $severityOrder[$_.CVSSv3_BaseSeverity.ToLower()] }
+    # Sort and group by severity
+    $severityOrder = @("critical", "high", "medium", "low")
+    foreach ($severity in $severityOrder) {
+        $group = $uniqueVulns | Where-Object { $_.CVSSv3_BaseSeverity.ToLower() -eq $severity }
 
-    foreach ($v in $sorted) {
-        $lines += "cve: $($v.CVE)"
-        $lines += "severity: $($v.CVSSv3_BaseSeverity.ToLower())"
-        $lines += "issue: $($v.Vulnerability)"
-        $lines += "action: ?"
-        $lines += ""
+        if ($group.Count -gt 0) {
+            $lines += "----------[${severity}]----------"
+            foreach ($v in $group | Sort-Object CVE) {
+                $lines += "cve: $($v.CVE)"
+                $lines += "issue: $($v.Vulnerability)"
+                $lines += ""
+            }
+        }
     }
 
     # Save to file
