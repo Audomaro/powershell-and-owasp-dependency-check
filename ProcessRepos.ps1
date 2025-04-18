@@ -12,6 +12,7 @@ param(
 . "${PSScriptRoot}\scripts\RunSecScan.ps1"
 . "${PSScriptRoot}\scripts\InstallNpmDependencies.ps1"
 . "${PSScriptRoot}\scripts\InstallNugetPackages.ps1"
+. "${PSScriptRoot}\scripts\GenerateCvss3Summary.ps1"
 
 # Create working directory if it does not exist
 if (-not (Test-Path $WorkDir)) {
@@ -47,26 +48,26 @@ foreach ($entry in $repoEntries) {
     }
 }
 
-# Phase 2: Install dependencies (npm and NuGet)
-Write-Host "=========================> Phase 2: Install dependencies (npm and NuGet)" -ForegroundColor $Env:COLOR_INFO
-foreach ($entry in $repoEntries) {
-    try {
-        $parts = $entry -split '\|'
-        $solutionName = $parts[0].Trim() -replace '[^\w\-]', '_'
-        $url = $parts[1].Trim()
+# # Phase 2: Install dependencies (npm and NuGet)
+# Write-Host "=========================> Phase 2: Install dependencies (npm and NuGet)" -ForegroundColor $Env:COLOR_INFO
+# foreach ($entry in $repoEntries) {
+#     try {
+#         $parts = $entry -split '\|'
+#         $solutionName = $parts[0].Trim() -replace '[^\w\-]', '_'
+#         $url = $parts[1].Trim()
 
-        $repoFolderName = [System.IO.Path]::GetFileNameWithoutExtension($url) -replace '[^\w\-]', '_'
-        $repoPath = Join-Path $WorkDir $repoFolderName
+#         $repoFolderName = [System.IO.Path]::GetFileNameWithoutExtension($url) -replace '[^\w\-]', '_'
+#         $repoPath = Join-Path $WorkDir $repoFolderName
 
-        Write-Host "Checking dependencies in ${repoPath}..." -ForegroundColor $Env:COLOR_INFO
+#         Write-Host "Checking dependencies in ${repoPath}..." -ForegroundColor $Env:COLOR_INFO
 
-        InstallNpmDependencies -ProjectPath $repoPath
-        InstallNugetPackages -ProjectPath $repoPath
-    }
-    catch {
-        Write-Warning "Error installing dependencies in ${entry}: $_"
-    }
-}
+#         InstallNpmDependencies -ProjectPath $repoPath
+#         InstallNugetPackages -ProjectPath $repoPath
+#     }
+#     catch {
+#         Write-Warning "Error installing dependencies in ${entry}: $_"
+#     }
+# }
 
 # Phase 3: Execute the scans
 Write-Host "=========================> Phase 3: Execute the scans" -ForegroundColor $Env:COLOR_INFO
@@ -92,4 +93,14 @@ foreach ($entry in $repoEntries) {
     catch {
         Write-Error "Scanning error ${entry}: $_"
     }
+}
+
+# Phase 4: Custom summary
+# Get all CSV files inside the repos folder
+$csvFiles = Get-ChildItem -Path "${PSScriptRoot}\repos" -Filter *.csv -ErrorAction SilentlyContinue
+
+# Loop through each CSV and generate the summary
+foreach ($csv in $csvFiles) {
+    Write-Host "Processing: $($csv.FullName)" -ForegroundColor $Env:COLOR_INFO
+    GenerateCvss3Summary -CsvPath $csv.FullName
 }

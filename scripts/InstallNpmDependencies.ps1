@@ -1,5 +1,6 @@
 function InstallNpmDependencies {
     param (
+        [Parameter(Mandatory = $true)]
         [string]$ProjectPath
     )
 

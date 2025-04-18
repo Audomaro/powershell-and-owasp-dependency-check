@@ -1,5 +1,6 @@
 function InstallNugetPackages {
     param (
+        [Parameter(Mandatory = $true)]
         [string]$ProjectPath
     )
 
