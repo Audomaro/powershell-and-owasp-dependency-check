@@ -5,7 +5,7 @@ function InstallNugetPackages {
     )
 
     # Buscar todos los .sln ignorando carpetas 'packages'
-    $slnFiles = Get-ChildItem -Path $ProjectPath -Filter "*.sln" -Recurse -Directory |
+    $slnFiles = Get-ChildItem -Path $ProjectPath -Filter "*.sln" -Recurse |
     Where-Object { $_.FullName -notmatch "\\packages\\.*" } |
     ForEach-Object { Get-ChildItem -Path $_.FullName -Filter "*.sln" -ErrorAction SilentlyContinue } |
     Where-Object { $_ -ne $null }
