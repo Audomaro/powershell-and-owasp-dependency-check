@@ -1,0 +1,41 @@
+﻿param(
+  [Parameter(Mandatory = $true, HelpMessage = "Por favor ingrese el valor para InstallUtilPath.")]
+  [ValidateNotNullOrEmpty()]
+  [string]$InstallUtilPath,
+  [Parameter(Mandatory = $true, HelpMessage = "Por favor ingrese el valor para ServiceName.")]
+  [ValidateNotNullOrEmpty()]
+  [string]$ServiceName,
+  [Parameter(Mandatory = $true, HelpMessage = "Por favor ingrese el valor para ServiceExePath.")]
+  [ValidateNotNullOrEmpty()]
+  [string]$ServiceExePath,
+  [Parameter(Mandatory = $true, HelpMessage = "Por favor ingrese el valor para ServiceExeName.")]
+  [ValidateNotNullOrEmpty()]
+  [string]$ServiceExeName
+)
+
+# Verificar si la aplicacion InstallUtil existe en la ruta especificada
+if (Test-Path $InstallUtilPath) {
+    # Verificar si el ejecutable existe en la ruta especificada
+    if (Test-Path $ServiceExePath) {
+      try {
+        # Intentar detener el servicio o proceso
+        net stop $ServiceName
+        taskkill  $ServiceExeName
+        & $InstallUtilPath /u $ServiceExePath
+        Write-Output "Servicio detenido y desistalado correctamente."
+        exit 0
+      }
+      catch {
+        Write-Output "OcurriÃ³ un error al intentar detener y desinstalar el servicio: $($_.Exception.Message)"
+        exit 1
+      }
+    }
+    else {
+      Write-Output "El servicio $ServiceExePath no existe."
+      exit 1
+    }
+}
+else {
+  Write-Output "La aplicacion InstallUtil $InstallUtilPath no existe."
+  exit 1
+}
