@@ -10,32 +10,62 @@ function RunSecScan {
         [string]$WorkDir,
 
         [Parameter(Mandatory = $false)]
-        [string]$excludePaths
+        [string]$excludePaths  # Exclusiones personalizadas separadas por coma
     )
 
+    # Ruta de salida del reporte CSV
     $outputCsv = Join-Path -Path $WorkDir -ChildPath "${ProjectName}.csv"
 
-    $excludePaths += ",**/node_modules/**,**/packages/**"
+    # Exclusiones por defecto comunes para Node.js, .NET, Java y Angular
+    $defaultExcludes = @(
+        "**/node_modules/**",     # Node.js
+        "**/packages/**",         # .NET NuGet packages
+        "**/bin/**",              # .NET / Java / Angular build folder
+        "**/obj/**",              # .NET intermediate build files
+        "**/target/**",           # Maven/Java
+        "**/dist/**",             # Angular/Node.js
+        "**/build/**"             # Gradle/JavaScript
+    )
 
-    & "dependency-check.bat" `
-        --project "${ProjectName}" `
-        -s "${ProjectPath}" `
-        -o "${outputCsv}" `
-        -n `
-        --format CSV `
-        --disableOssIndex `
-        --exclude "**/node_modules/**,**/packages/**" `
-        --disableComposer `
-        --disableArchive `
-        --disableJar `
-        --disableAutoconf `
-        --disableCmake `
-        --disablePip `
-        --disablePipfile `
-        --nodeAudit `
-        --disableYarnAudit `
-        --disableAssembly `
-        --disableCentral `
-        --disableRetireJS `
-        --enableExperimental
+    # Convertir exclusiones adicionales en lista (si se proporcionan)
+    $customExcludes = @()
+    if ($excludePaths) {
+        $customExcludes = $excludePaths.Split(",") | ForEach-Object { $_.Trim() }
+    }
+
+    # Unir exclusiones por defecto y personalizadas, sin duplicados ni vacíos
+    $allExcludes = ($defaultExcludes + $customExcludes) | Where-Object { $_ -ne "" } | Sort-Object -Unique
+
+    # Construir argumentos de exclusión
+    $excludeArgs = @()
+    foreach ($path in $allExcludes) {
+        $excludeArgs += "--exclude"
+        $excludeArgs += $path
+    }
+
+    # Construir todos los argumentos del comando
+    $args = @(
+        "--project", $ProjectName,
+        "-s", $ProjectPath,
+        "-o", $outputCsv,
+        "-n",
+        "--format", "CSV",
+        "--disableOssIndex",
+        "--disableComposer",
+        "--disableArchive",
+        "--disableJar",
+        "--disableAutoconf",
+        "--disableCmake",
+        "--disablePip",
+        "--disablePipfile",
+        "--nodeAudit",
+        "--disableYarnAudit",
+        "--disableAssembly",
+        "--disableCentral",
+        "--disableRetireJS",
+        "--enableExperimental"
+    ) + $excludeArgs
+
+    # Ejecutar Dependency Check
+    & "dependency-check.bat" @args
 }

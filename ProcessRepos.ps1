@@ -96,7 +96,7 @@ foreach ($entry in $repoEntries) {
 }
 
 # Phase 4: Custom summary, get all CSV files inside the repos folder
-$csvFiles = Get-ChildItem -Path "${PSScriptRoot}\repos" -Filter *.csv -ErrorAction SilentlyContinue
+$csvFiles = Get-ChildItem -Path $WorkDir -Filter *.csv -ErrorAction SilentlyContinue
 
 # Loop through each CSV and generate the summary
 foreach ($csv in $csvFiles) {
