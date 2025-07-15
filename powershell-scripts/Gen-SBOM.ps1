@@ -1,46 +1,76 @@
+﻿# Powershell
+# Major  Minor  Build  Revision
+# -----  -----  -----  --------
+# 5      1      20348  2849
 param (
-    [Parameter(Mandatory = $true)]
-    [string]$ProjectPath,
+  [Parameter(Mandatory = $true)]
+  [string]$ProjectName,
 
-    [Parameter(Mandatory = $true)]
-    [string]$NuGetConfigPath,
+  [Parameter(Mandatory = $true)]
+  [string]$ProjectVersion,
 
-    [string]$MsBuildPath = "C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe"
+  [Parameter(Mandatory = $true)]
+  [string]$ProjectPath,
+
+  [Parameter(Mandatory = $true)]
+  [string]$NuGetConfigPath,
+
+  [Parameter(Mandatory = $true)]
+  [string]$DepTrackServer,
+
+  [Parameter(Mandatory = $true)]
+  [string]$DepTrackApiKey,
+
+  [Parameter(Mandatory = $true)]
+  [string]$MsBuildPath,
+
+  [switch]$VerboseOutput = $true
 )
 
-# === 🔍 Lista interna de tipos de proyecto y su archivo característico ===
 $projectSignatureFiles = @{
-    "npm"              = "package.json"
-    "dotnet-framework" = "packages.config"
-    # "java-maven"     = "pom.xml"
-    # "java-gradle"    = "build.gradle"
-    # "python"         = "requirements.txt"
+  "npm"              = "package.json"
+  "dotnet-framework" = "packages.config"
+  # "java-maven"     = "pom.xml"
+  # "java-gradle"    = "build.gradle"
+  # "python"         = "requirements.txt"
 }
-
 function Test-ToolAvailability {
-    param ([string]$Command)
-    return $null -ne (Get-Command $Command -ErrorAction SilentlyContinue)
+  param ([string]$Command)
+  return $null -ne (Get-Command $Command -ErrorAction SilentlyContinue)
 }
 
 function Assert-RequiredTools {
-    if (-not (Test-ToolAvailability "dotnet-cyclonedx")) {
-        Write-Error "ERROR: 'dotnet-cyclonedx' no está disponible en el sistema."
-        exit 1
+  if (-not (Test-ToolAvailability "dotnet-cyclonedx")) {
+    Write-Error "❌ ERROR: 'dotnet-cyclonedx' is not available on the system."
+    exit 1
+  }
+  if (-not (Test-ToolAvailability "npx")) {
+    Write-Error "❌ ERROR: 'npx' is not available. Make sure Node.js is installed."
+    exit 1
+  }
+  if (-not (Test-ToolAvailability "cyclonedx-cli.exe")) {
+    Write-Error "❌ ERROR: 'cyclonedx-cli' is not available. Install it to perform merge."
+    exit 1
+  }
+}
+
+function Run-Command {
+    param (
+        [string]$Command,
+        [string[]]$Arguments,
+        [switch]$ShowOutput
+    )
+
+    if ($ShowOutput) {
+        & $Command @Arguments
     }
-    if (-not (Test-ToolAvailability "npx")) {
-        Write-Error "ERROR: 'npx' no está disponible. Asegúrate de tener Node.js instalado."
-        exit 1
-    }
-    if (-not (Test-ToolAvailability "cyclonedx-cli")) {
-        Write-Error "ERROR: 'cyclonedx-cli' no está disponible. Instálalo para hacer merge."
-        exit 1
+    else {
+        & $Command @Arguments | Out-Null
     }
 }
 
 function Find-ProjectsRecursively {
-    param (
-        [string]$basePath
-    )
+    param ([string]$basePath)
 
     $projects = @()
     $ignoredFolders = @('bin', 'obj', 'packages', 'node_modules', '.git', '.vs', 'dist', 'build', '.angular')
@@ -52,7 +82,7 @@ function Find-ProjectsRecursively {
         $signatureLookup[$sig] = $key
     }
 
-    Write-Host "`n🔎 Buscando archivos de proyecto válidos..."
+    Write-Host "`n🔎 Searching for valid project files..." -ForegroundColor Cyan
 
     Get-ChildItem -Path $basePath -Recurse -File -ErrorAction SilentlyContinue |
     Where-Object {
@@ -78,10 +108,153 @@ function Find-ProjectsRecursively {
     return $projects
 }
 
-# === PASO 0: Validación de herramientas ===
-Write-Host "`n============================"
-Write-Host "PASO 0: 🧪 Validando herramientas instaladas"
-Write-Host "============================"
+function Install-Packages {
+    param (
+      [string]$fullPath,
+      [string]$type
+    )
+
+    Write-Host "`n==> Processing project: $fullPath" -ForegroundColor Cyan
+    Write-Host "   Detected type: $type" -ForegroundColor Cyan
+
+    switch ($type) {
+        "npm" {
+            if (Test-Path (Join-Path $fullPath 'package.json')) {
+                # if (Test-Path (Join-Path $fullPath 'node_modules')) {
+                #     Write-Host "   📦 'node_modules' folder detected. Skipping dependency installation." -ForegroundColor Yellow
+                # }
+                # else {
+                    Push-Location $fullPath
+                    try {
+                        Write-Host "   📦 Running 'npm ci' to install dependencies..." -ForegroundColor DarkGray
+                        Run-Command -Command "npm" -Arguments @("ci") -ShowOutput:$VerboseOutput
+                        Write-Host "   ✔ npm ci completed successfully." -ForegroundColor Green
+                    }
+                    catch {
+                        Write-Error "   ❌ Error during 'npm ci': $_"
+                        continue
+                    }
+                    finally {
+                        Pop-Location
+                    }
+                }
+            # }
+        }
+        "dotnet-framework" {
+            # if (Test-Path (Join-Path $fullPath 'packages')) {
+            #     Write-Host "   📦 'packages' folder detected. Skipping package restore." -ForegroundColor Yellow
+            # }
+            # else {
+                $packagesConfig = Get-ChildItem -Path $fullPath -Filter "packages.config" -Recurse | Select-Object -First 1
+                $csproj = Get-ChildItem -Path $fullPath -Filter "*.csproj" -Recurse | Select-Object -First 1
+
+                if ($packagesConfig -and $csproj) {
+                    Write-Host "   📦 Restoring NuGet packages with MSBuild..." -ForegroundColor DarkGray
+                    try {
+                        $args = @(
+                            "/t:restore",
+                            "/p:RestorePackagesConfig=true",
+                            "/p:RestoreConfigFile=$NuGetConfigPath",
+                            "$($csproj.FullName)"
+                        )
+                        Run-Command -Command $MsBuildPath -Arguments $args -ShowOutput:$VerboseOutput
+                        Write-Host "   ✔ Packages restored successfully." -ForegroundColor Green
+                    }
+                    catch {
+                        Write-Error "   ❌ Error during NuGet package restore: $_"
+                        continue
+                    }
+                }
+                else {
+                    Write-Warning "   ⚠ packages.config or valid .csproj not found in $fullPath"
+                    continue
+                }
+            # }
+        }
+        default {
+          Write-Warning "   ⚠ $fullPath is invalid project/type "
+        }
+    }
+}
+
+function Generate-SBOM {
+    param (
+      [string]$fullPath,
+      [string]$type
+    )
+
+    $cleanPath = $fullPath.TrimEnd('\')
+    $sbomFileName = "sbom.json"
+    $sbomFullPath = Join-Path $cleanPath $sbomFileName
+
+    switch ($type) {
+        "dotnet-framework" {
+            Write-Host "   🛠 Generating SBOM with dotnet-cyclonedx..." -ForegroundColor DarkGray
+            Run-Command -Command "dotnet-cyclonedx" -Arguments @($cleanPath, "-j", "-o", $cleanPath, "-fn", $sbomFileName) -ShowOutput:$VerboseOutput
+        }
+        "npm" {
+            Push-Location $cleanPath
+            try {
+                Write-Host "   🛠 Generating SBOM with npx @cyclonedx/cyclonedx-npm ..." -ForegroundColor DarkGray
+                Run-Command -Command "npx" -Arguments @("--yes", "@cyclonedx/cyclonedx-npm", "-o", $sbomFullPath, "--of", "JSON") -ShowOutput:$VerboseOutput
+            }
+            catch {
+                Write-Error "   ❌ Error during SBOM generation: $_"
+            }
+            finally {
+                Pop-Location
+            }
+        }
+        default {
+            Write-Warning "   ⚠ Type not yet supported for generation: $type"
+            continue
+        }
+    }
+
+    if (Test-Path $sbomFullPath) {
+        $resolvedPath = (Resolve-Path $sbomFullPath).Path
+        Write-Host "   ✔ SBOM generated: $resolvedPath" -ForegroundColor Green
+        return $resolvedPath
+    }
+    else {
+        Write-Warning "   ❌ sbom.json was not generated in: $cleanPath"
+    }
+}
+
+function Merge-SBOMs {
+  param (
+      [string[]]$sbomPaths
+    )
+
+  if ($sbomPaths.Count -eq 0) {
+      Write-Warning "`n❌ No SBOM files were generated to merge."
+      exit 0
+  }
+
+  $mergedSbom = Join-Path $currentDir "merged-sbom.json"
+
+  Write-Host "`n📦 Files to merge:" -ForegroundColor Cyan
+  $sbomPaths | ForEach-Object { Write-Host " - $_" -ForegroundColor DarkGray }
+
+  $arguments = @(
+      "merge",
+      "--input-format", "json",
+      "--output-format", "json",
+      "--output-file", "$mergedSbom",
+      "--input-files"
+  ) + $sbomPaths
+
+  Run-Command -Command "cyclonedx-cli" -Arguments $arguments -ShowOutput:$VerboseOutput
+
+  Write-Host "`n✅ Merged file generated: $mergedSbom" -ForegroundColor Green
+
+  return $mergedSbom
+}
+
+Write-Host "`n============================" -ForegroundColor Cyan
+Write-Host "STEP 0: 🧪 Validating installed tools" -ForegroundColor Cyan
+Write-Host "============================" -ForegroundColor Cyan
+
 Assert-RequiredTools
 
 $currentDir = Get-Location
@@ -91,226 +264,138 @@ try {
     $rootFullPath = (Resolve-Path $ProjectPath).Path
 }
 catch {
-    Write-Error "❌ No se pudo resolver la ruta: $ProjectPath"
+    Write-Error "❌ Could not resolve path: $ProjectPath"
     exit 1
 }
 
-Write-Host "`n============================"
-Write-Host "PASO 1: 🏗 Generación de SBOMs individuales"
-Write-Host "============================"
-Write-Host "`n📁 Buscando proyectos válidos en: $rootFullPath ..."
+Write-Host "`n============================" -ForegroundColor Cyan
+Write-Host "STEP 1: 🏗 Generating individual SBOMs" -ForegroundColor Cyan
+Write-Host "============================" -ForegroundColor Cyan
+Write-Host "`n📁 Searching for valid projects in: $rootFullPath ..." -ForegroundColor Cyan
 $projectInfos = Find-ProjectsRecursively -basePath $rootFullPath
 
 if ($projectInfos.Count -eq 0) {
-    Write-Warning "⚠ No se encontraron proyectos válidos en la ruta proporcionada."
+    Write-Warning "⚠ No valid projects found in the provided path."
     exit 0
 }
 
 foreach ($proj in $projectInfos) {
-    Write-Host "Proyecto detectado: $($proj.Path) - Tipo: $($proj.Type)"
+    Write-Host "✔ Detected project: $($proj.Path) - Type: $($proj.Type)" -ForegroundColor Green
 }
 
-Write-Host " 🏗 Instalación de paquetes"
+Write-Host "`n🏗 Installing packages" -ForegroundColor Cyan
 foreach ($proj in $projectInfos) {
-    $fullPath = $proj.Path
-    $type = $proj.Type
-
-    Write-Host "`n==> Procesando proyecto: $fullPath"
-    Write-Host "   Tipo detectado: $type"
-
-    # === INSTALACIÓN DE DEPENDENCIAS SEGÚN TIPO ===
-    switch ($type) {
-        "npm" {
-            if (Test-Path (Join-Path $fullPath 'package.json')) {
-                Push-Location $fullPath
-                try {
-                    Write-Host "   📦 Ejecutando 'npm ci --silent' para instalar dependencias..." -ForegroundColor DarkGray
-                    npm ci --silent
-                    Write-Host "   ✔ npm ci completado exitosamente." -ForegroundColor Green
-                } catch {
-                    Write-Error "   ❌ Error durante 'npm ci': $_"
-                    continue
-                } finally {
-                    Pop-Location
-                }
-            }
-        }
-        "dotnet-framework" {
-            $packagesConfig = Get-ChildItem -Path $fullPath -Filter "packages.config" -Recurse | Select-Object -First 1
-            $csproj = Get-ChildItem -Path $fullPath -Filter "*.csproj" -Recurse | Select-Object -First 1
-
-            if ($packagesConfig -and $csproj) {
-                Write-Host "   📦 Restaurando paquetes NuGet con MSBuild..." -ForegroundColor DarkGray
-                try {
-                    & "$MsBuildPath" "/t:restore" `
-                        "/p:RestorePackagesConfig=true" `
-                        "/p:RestoreConfigFile=$NuGetConfigPath" `
-                        "$($csproj.FullName)"
-                    Write-Host "   ✔ Paquetes restaurados exitosamente." -ForegroundColor Green
-                } catch {
-                    Write-Error "   ❌ Error durante la restauración de paquetes NuGet: $_"
-                    continue
-                }
-            } else {
-                Write-Warning "   ⚠ No se encontró packages.config o .csproj válido en $fullPath"
-                continue
-            }
-        }
-    }
-
-    # === GENERACIÓN DE SBOM ===
-    $cleanPath = $fullPath.TrimEnd('\')
-    $sbomFileName = "sbom.json"
-    $sbomFullPath = Join-Path $cleanPath $sbomFileName
-
-    switch ($type) {
-        "dotnet-framework" {
-            Write-Host "   🛠 Generando SBOM con dotnet-cyclonedx..."
-            & dotnet-cyclonedx $cleanPath -j -o $cleanPath -fn $sbomFileName
-        }
-        "npm" {
-            Push-Location $cleanPath
-            try {
-                Write-Host "   🛠 Generando SBOM con npx @cyclonedx/cyclonedx-npm ..."
-                npx --yes @cyclonedx/cyclonedx-npm -o $sbomFullPath --of JSON
-            }
-            finally {
-                Pop-Location
-            }
-        }
-        default {
-            Write-Warning "   ⚠ Tipo no soportado aún para generación: $type"
-            continue
-        }
-    }
-
-    if (Test-Path $sbomFullPath) {
-        $resolvedPath = (Resolve-Path $sbomFullPath).Path
-        $sbomPaths += $resolvedPath
-        Write-Host "   ✔ SBOM generado: $resolvedPath"
-    }
-    else {
-        Write-Warning "   ❌ No se generó sbom.json en: $cleanPath"
-    }
+    Install-Packages -fullPath $proj.Path -type $proj.Type
+    $sbomPaths += Generate-SBOM -fullPath $proj.Path -type $proj.Type
 }
 
-foreach ($proj in $projectInfos) {
-    $fullPath = $proj.Path
-    $type = $proj.Type
+Write-Host "`n============================" -ForegroundColor Cyan
+Write-Host "STEP 2: 🔄 Merging SBOMs" -ForegroundColor Cyan
+Write-Host "============================" -ForegroundColor Cyan
 
-    Write-Host "`n==> Procesando proyecto: $fullPath"
-    Write-Host "   Tipo detectado: $type"
+$mergedSbom = Merge-SBOMs -sbomPaths $sbomPaths
 
-    $cleanPath = $fullPath.TrimEnd('\')
-    $sbomFileName = "sbom.json"
-    $sbomFullPath = Join-Path $cleanPath $sbomFileName
-
-    switch ($type) {
-        "dotnet-framework" {
-            Write-Host "   🛠 Generando SBOM con dotnet-cyclonedx..."
-            & dotnet-cyclonedx $cleanPath -j -o $cleanPath -fn $sbomFileName
-        }
-        "npm" {
-            Push-Location $cleanPath
-            try {
-                Write-Host "   🛠 Generando SBOM con npx @cyclonedx/cyclonedx-npm ..."
-                npx --yes @cyclonedx/cyclonedx-npm -o $sbomFullPath --of JSON
-            }
-            finally {
-                Pop-Location
-            }
-        }
-        default {
-            Write-Warning "   ⚠ Tipo no soportado aún para generación: $type"
-            continue
-        }
-    }
-
-    if (Test-Path $sbomFullPath) {
-        $resolvedPath = (Resolve-Path $sbomFullPath).Path
-        $sbomPaths += $resolvedPath
-        Write-Host "   ✔ SBOM generado: $resolvedPath"
-    }
-    else {
-        Write-Warning "   ❌ No se generó sbom.json en: $cleanPath"
-    }
-}
-
-# === PASO 2: 🔄 Merge de SBOMs ===
 Write-Host "`n============================"
-Write-Host "PASO 2: 🔄 Merge de SBOMs"
+Write-Host "STEP 3: ☁ Upload to Dependency-Track"
 Write-Host "============================"
 
-if ($sbomPaths.Count -eq 0) {
-    Write-Warning "`n❌ No se generaron archivos SBOM para hacer merge."
-    exit 0
-}
-
-$mergedSbom = Join-Path $currentDir "merged-sbom.json"
-
-Write-Host "`n📦 Archivos a mergear:"
-$sbomPaths | ForEach-Object { Write-Host " - $_" }
-
-# Preparar argumentos para merge
-$arguments = @(
-    "merge",
-    "--input-format", "json",
-    "--output-format", "json",
-    "--output-file", "$mergedSbom",
-    "--input-files"
-) + $sbomPaths
-
-# Ejecutar merge
-& cyclonedx-cli @arguments
-
-Write-Host "`n✅ Archivo mergeado generado: $mergedSbom"
-
-# === PASO 3: ☁ Subida a Dependency-Track ===
-Write-Host "`n============================"
-Write-Host "PASO 3: ☁ Subida a Dependency-Track"
-Write-Host "============================"
-
-# ⚠️ CONFIGURA ESTOS VALORES:
-$dependencyTrackApiKey = "odt_JHH2CbBW8FytSidyVBnHCXylc2Its6PE"
-$dependencyTrackBaseUrl = "https://dt.cyber.chq.ei"
-
-# Puedes ajustar nombre/versión si quieres identificar builds distintos
-$projectName = "MEXICO APPS/Portal EDI HP"
-$projectVersion = "1.0.0"
-$proxyUrl = "http://proxy.chq.ei:8080"
+Write-Host $mergedSbom
 
 if (-not (Test-Path $mergedSbom)) {
-    Write-Error "❌ El archivo mergeado '$mergedSbom' no existe, no se puede subir."
+    Write-Error "❌ The merged file '$mergedSbom' does not exist, cannot upload."
     exit 1
 }
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+# CODE FORM POWERSHELL 5.1
 try {
-    Write-Host "📤 Subiendo archivo SBOM a Dependency-Track..."
+  Write-Host "📤 Subiendo archivo SBOM a Dependency-Track..."
 
-    $headers = @{
-        "X-Api-Key" = $dependencyTrackApiKey
-    }
+  $boundary = [System.Guid]::NewGuid().ToString()
+  $LF = "`r`n"
 
-    $formData = @{
-        projectName    = $projectName
-        projectVersion = $projectVersion
-        autoCreate     = "true"
-        isLatest       = "true"
-        bom            = Get-Item "$mergedSbom"
-    }
+  $filePath = "$mergedSbom"
+  $fileBytes = [System.IO.File]::ReadAllBytes($filePath)
+  $fileName = [System.IO.Path]::GetFileName($filePath)
+  $fileContent = [System.Text.Encoding]::GetEncoding("ISO-8859-1").GetString($fileBytes)
 
-    $response = Invoke-RestMethod -Uri "$dependencyTrackBaseUrl/api/v1/bom" `
-        -Method Post `
-        -Headers $headers `
-        -Form $formData
+  $bodyLines = @()
+  $bodyLines += "--$boundary"
+  $bodyLines += "Content-Disposition: form-data; name=`"projectName`"$LF"
+  $bodyLines += "$projectName"
 
-    Write-Host "`n✅ Subida completada. Token: $($response.token)"
+  $bodyLines += "--$boundary"
+  $bodyLines += "Content-Disposition: form-data; name=`"projectVersion`"$LF"
+  $bodyLines += "$projectVersion"
+
+  $bodyLines += "--$boundary"
+  $bodyLines += "Content-Disposition: form-data; name=`"autoCreate`"$LF"
+  $bodyLines += "true"
+
+  $bodyLines += "--$boundary"
+  $bodyLines += "Content-Disposition: form-data; name=`"isLatest`"$LF"
+  $bodyLines += "true"
+
+  $bodyLines += "--$boundary"
+  $bodyLines += "Content-Disposition: form-data; name=`"bom`"; filename=`"$fileName`""
+  $bodyLines += "Content-Type: application/octet-stream$LF"
+  $bodyLines += $fileContent
+
+  $bodyLines += "--$boundary--$LF"
+
+  $body = $bodyLines -join $LF
+  $bytes = [System.Text.Encoding]::GetEncoding("ISO-8859-1").GetBytes($body)
+
+  $headers = @{
+    "X-Api-Key"    = $DepTrackApiKey
+    "Content-Type" = "multipart/form-data; boundary=$boundary"
+  }
+
+  $response = Invoke-WebRequest -Uri "$DepTrackServer/api/v1/bom" `
+    -Method Post `
+    -Headers $headers `
+    -Body $bytes
+
+  $content = $response.Content | ConvertFrom-Json
+  Write-Host "`n✅ Subida completada. Token: $($content.token)"
 }
 catch {
-    Write-Error "❌ Error durante la subida a Dependency-Track: $_"
-    if ($_.Exception.InnerException) {
-        Write-Error "👉 Inner: $($_.Exception.InnerException.Message)"
-    }
+  Write-Error "❌ Error durante la subida a Dependency-Track: $_"
+  if ($_.Exception.InnerException) {
+    Write-Error "👉 Inner: $($_.Exception.InnerException.Message)"
+  }
 }
+
+## PORWERSHELL 7.1
+# try {
+
+#   Write-Host "📤 Uploading SBOM file to Dependency-Track..."
+
+#   $headers = @{
+#     "X-Api-Key" = $DepTrackApiKey
+#   }
+
+#   $formData = @{
+#     projectName    = $projectName
+#     projectVersion = $projectVersion
+#     autoCreate     = "true"
+#     isLatest       = "true"
+#     bom            = Get-Item "$mergedSbom"
+#   }
+
+#   $response = Invoke-WebRequest -Uri "$DepTrackServer/api/v1/bom" `
+#     -Method Post `
+#     -Headers $headers `
+#     -Form $formData
+
+#   # Parsear la respuesta si es JSON
+#   $content = $response.Content | ConvertFrom-Json
+#   Write-Host "`n✅ Upload completed. Token: $($content.token)"
+# }
+# catch {
+#     Write-Error "❌ Error during upload to Dependency-Track: $_"
+#     if ($_.Exception.InnerException) {
+#         Write-Error "👉 Inner: $($_.Exception.InnerException.Message)"
+#     }
+# }

@@ -3,7 +3,7 @@ param (
   [string]$ReleasePath,
 
   [Parameter(Mandatory = $true)]
-  [hashtable]$tokens
+  [string]$tokens  # Ahora es string (JSON)
 )
 
 if (-not (Test-Path $ReleasePath)) {
@@ -11,7 +11,16 @@ if (-not (Test-Path $ReleasePath)) {
   exit 1
 }
 
-# Buscar todos los archivos .config en la carpeta (recursivamente si se desea)
+# Convertir string JSON a objeto de PowerShell
+try {
+  $tokensObj = $tokens | ConvertFrom-Json
+}
+catch {
+  Write-Error "El parámetro 'tokens' no contiene JSON válido: $_"
+  exit 1
+}
+
+# Buscar archivos .config
 $configFiles = Get-ChildItem -Path $ReleasePath -Filter *.config -Recurse
 
 if ($configFiles.Count -eq 0) {
@@ -23,14 +32,12 @@ foreach ($file in $configFiles) {
   Write-Host "Procesando '$($file.FullName)'..."
 
   try {
-    # Leer el contenido como una sola cadena
     $content = Get-Content $file.FullName -Raw
 
-    foreach ($key in $tokens.Keys) {
+    foreach ($key in $tokensObj.PSObject.Properties.Name) {
       $escapedKey = [Regex]::Escape($key)
-      $value = $tokens[$key]
+      $value = $tokensObj.$key
 
-      # Reemplazo insensible a mayúsculas y minúsculas
       $content = [Regex]::Replace(
         $content,
         $escapedKey,
@@ -39,7 +46,6 @@ foreach ($file in $configFiles) {
       )
     }
 
-    # Guardar los cambios
     Set-Content -Path $file.FullName -Value $content
     Write-Host "Tokens reemplazados correctamente en '$($file.Name)'."
   }
