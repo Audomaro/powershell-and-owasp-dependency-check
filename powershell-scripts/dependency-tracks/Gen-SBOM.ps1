@@ -15,14 +15,14 @@ param (
     [Parameter(Mandatory = $true)]
     [string]$NuGetConfigPath,
 
-    # [Parameter(Mandatory = $true)]
-    [string]$DepTrackServer = "https://dt.cyber.chq.ei",
+    [Parameter(Mandatory = $true)]
+    [string]$DepTrackServer,
 
-    # [Parameter(Mandatory = $true)]
-    [string]$DepTrackApiKey = "odt_JHH2CbBW8FytSidyVBnHCXylc2Its6PE",
+    [Parameter(Mandatory = $true)]
+    [string]$DepTrackApiKey,
 
-    # [Parameter(Mandatory = $true)]
-    [string]$MsBuildPath = "C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
+    [Parameter(Mandatory = $true)]
+    [string]$MsBuildPath,
 
     [switch]$VerboseOutput = $false
 )
@@ -295,7 +295,7 @@ Write-Host "STEP 2: 🔄 Merging SBOMs" -ForegroundColor Cyan
 Write-Host "============================" -ForegroundColor Cyan
 
 $mergedSbom = Merge-SBOMs -sbomPaths $sbomPaths
-$mergedSbom = "C:\_audomaro_\repos\edi\EDI_Preclass\webapp\sbom.json"
+
 Write-Host "`n============================" -ForegroundColor Cyan
 Write-Host "STEP 3: ☁ Upload to Dependency-Track" -ForegroundColor Cyan
 Write-Host "============================" -ForegroundColor Cyan
@@ -306,77 +306,118 @@ if (-not (Test-Path $mergedSbom)) {
 }
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-[System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy($proxyUrl)
-
-# PORWERSHELL 7.1
-try {
-
-  Write-Host "📤 Uploading SBOM file to Dependency-Track..."
-
-  $headers = @{
-    "X-Api-Key" = $DepTrackApiKey
-  }
-
-  $formData = @{
-    projectName    = $projectName
-    projectVersion = $projectVersion
-    autoCreate     = "true"
-    isLatest       = "true"
-    bom            = Get-Item "$mergedSbom"
-  }
-
-  $response = Invoke-WebRequest -Uri "$DepTrackServer/api/v1/bom" `
-    -Method Post `
-    -Headers $headers `
-    -Form $formData
-
-  # Parsear la respuesta si es JSON
-  $content = $response.Content | ConvertFrom-Json
-  Write-Host "`n✅ Upload completed. Token: $($content.token)"
-}
-catch {
-    Write-Error "❌ Error during upload to Dependency-Track: $_"
-    if ($_.Exception.InnerException) {
-        Write-Error "👉 Inner: $($_.Exception.InnerException.Message)"
-    }
-}
+# [System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy($proxyUrl)
 
 # CODE FORM POWERSHELL 5.1
 try {
-    Write-Host "📤 Subiendo archivo SBOM a Dependency-Track..."
+    # Create HttpClient and set headers
+    Add-Type -AssemblyName System.Net.Http
 
-    $sbomBytes = [System.IO.File]::ReadAllBytes($mergedSbom)
-    $sbomBase64 = [System.Convert]::ToBase64String($sbomBytes)
+    $handler = New-Object System.Net.Http.HttpClientHandler
+    $client = New-Object System.Net.Http.HttpClient($handler)
+    $client.DefaultRequestHeaders.Add("X-API-Key", $DepTrackApiKey)
 
-    $body = @{
-        projectName    = $projectName
-        projectVersion = $projectVersion
-        autoCreate     = $true
-        bom            = Get-Item $mergedSbom
+    # Create MultipartFormDataContent
+    $multipartContent = New-Object System.Net.Http.MultipartFormDataContent
+
+    $multipartContent.Add((New-Object System.Net.Http.StringContent($ProjectName)), "projectName")
+    $multipartContent.Add((New-Object System.Net.Http.StringContent($projectVersion)), "projectVersion")
+    $multipartContent.Add((New-Object System.Net.Http.StringContent($true)), "projectVersion")
+
+    # Add the SBOM file
+    $fileStream = [System.IO.File]::OpenRead($mergedSbom)
+    $fileContent = New-Object System.Net.Http.StreamContent($fileStream)
+    $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/octet-stream")
+    $multipartContent.Add($fileContent, "bom", [System.IO.Path]::GetFileName($mergedSbom))
+
+    # Send the request
+    $response = $client.PostAsync("$DepTrackServer/api/v1/bom", $multipartContent).Result
+    $responseContent = $response.Content.ReadAsStringAsync().Result
+
+    # Check for success
+    if ($response.IsSuccessStatusCode) {
+        $parsedResponse = $responseContent | ConvertFrom-Json
+        $token = $parsedResponse.token
+        Write-Host "✅ SBOM uploaded successfully!"
+        Write-Host "Response: $token"
     }
-
-    $headers = @{
-        "X-Api-Key"    = $DepTrackApiKey
-        "Content-Type" = "application/json"
-    }
-
-    try {
-        $response = Invoke-RestMethod `
-            -Uri "$DepTrackServer/api/v1/bom" `
-            -Method Post `
-            -Headers $headers `
-            -Form $body
-
-        Write-Host "`n✅ Subida completada. Token: $($response.token)"
-    }
-    catch {
-        Write-Error "Error: $_"
-        exit 1
+    else {
+        Write-Error "❌ Upload failed with status code $($response.StatusCode): $responseContent"
     }
 }
 catch {
-    Write-Error "❌ Error durante la subida a Dependency-Track: $_"
-    if ($_.Exception.InnerException) {
-        Write-Error "👉 Inner: $($_.Exception.InnerException.Message)"
-    }
+    Write-Error "❗ An error occurred: $_"
 }
+
+# # PORWERSHELL 5.1
+# try {
+#     Write-Host "📤 Uploading SBOM file to Dependency-Track..."
+
+#     $sbomBytes = [System.IO.File]::ReadAllBytes($mergedSbom)
+#     $sbomBase64 = [System.Convert]::ToBase64String($sbomBytes)
+
+#     $body = @{
+#         projectName    = $projectName
+#         projectVersion = $projectVersion
+#         autoCreate     = $true
+#         bom            = Get-Item $mergedSbom
+#     }
+
+#     $headers = @{
+#         "X-Api-Key"    = $DepTrackApiKey
+#         "Content-Type" = "application/json"
+#     }
+
+#     try {
+#         $response = Invoke-RestMethod `
+#             -Uri "$DepTrackServer/api/v1/bom" `
+#             -Method Post `
+#             -Headers $headers `
+#             -Form $body
+
+#            Write-Host "`n✅ Upload completed. Token: $($response.token)"
+#     }
+#     catch {
+#         Write-Error "Error: $_"
+#         exit 1
+#     }
+# }
+# catch {
+#     Write-Error "❌ Error during upload to Dependency-Track: $_"
+#     if ($_.Exception.InnerException) {
+#         Write-Error "👉 Inner: $($_.Exception.InnerException.Message)"
+#     }
+# }
+
+# # PORWERSHELL 7.1
+# try {
+
+#   Write-Host "📤 Uploading SBOM file to Dependency-Track..."
+
+#   $headers = @{
+#     "X-Api-Key" = $DepTrackApiKey
+#   }
+
+#   $formData = @{
+#     projectName    = $projectName
+#     projectVersion = $projectVersion
+#     autoCreate     = "true"
+#     isLatest       = "true"
+#     bom            = Get-Item "$mergedSbom"
+#   }
+
+#   $response = Invoke-WebRequest -Uri "$DepTrackServer/api/v1/bom" `
+#     -Method Post `
+#     -Headers $headers `
+#     -Form $formData
+
+#   # Parsear la respuesta si es JSON
+#   $content = $response.Content | ConvertFrom-Json
+#   Write-Host "`n✅ Upload completed. Token: $($content.token)"
+# }
+# catch {
+#     Write-Error "❌ Error during upload to Dependency-Track: $_"
+#     if ($_.Exception.InnerException) {
+#         Write-Error "👉 Inner: $($_.Exception.InnerException.Message)"
+#     }
+# }
